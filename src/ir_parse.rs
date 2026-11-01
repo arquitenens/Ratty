@@ -144,6 +144,8 @@ impl RawParser {
         let maybe_regs1 = (regs & !0xAAFFFFFF4040FFFF) >> 16;
         let maybe_regs2 = (regs & !0xAAFF4040FFFFFFFF) >> 32;
 
+
+        //zero register instructions are rare so rather precompute cheaply than messing up the branch predictor
         let r0 = RAW_REGISTERS[RawParser::pair_index(maybe_regs0)];
 
         //TODO check the asm/what llvm produces, if its a jump table or cmov
@@ -154,6 +156,8 @@ impl RawParser {
         // i can probably improve this with a few tricks
         //though improving 3 predictable branches is hard
         let registers = match get_regs_cnt {
+            0 => [Register::None, Register::None, Register::None],
+
             1 => [r0, Register::None, Register::None],
 
             2 => [
@@ -167,10 +171,6 @@ impl RawParser {
                 RAW_REGISTERS[RawParser::pair_index(maybe_regs2)],
             ],
 
-            4 => [
-                //Hope llvm makes jump table
-                Register::None, Register::None, Register::None,
-            ],
 
             _ => unreachable!(),
         };
