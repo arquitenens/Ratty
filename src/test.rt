@@ -1,3 +1,2 @@
-LOAD__A AA&&&&!
-MUL___C AAABAC!
-DIV___D AAAB&&!
+local x: i32 = 0
+print("hello there")

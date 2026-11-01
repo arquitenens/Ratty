@@ -18,9 +18,10 @@ const NANIZATION: u64 = 0x7FF << 52;
 const REGISTER_FLAG_OFFSET: u8 = 52;
 
 
-seq!(N in 0..=255 {
-    #[repr(u8)]
-    pub enum RegisterAliases {
+seq!(N in 0..=511 {
+    #[repr(u16)]
+    #[derive(Clone, Debug, Copy)]
+pub enum RegisterAliases {
         #(
             R~N = N,
         )*
