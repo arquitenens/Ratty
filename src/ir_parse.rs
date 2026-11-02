@@ -132,6 +132,7 @@ impl RawParser {
         let instr = unsafe {IROps::from_raw(((c >> 48) & 0xff) as u8)};
         //because its a pow 2 being 64 in ascii owowowow :33
         const REG_SEP: char = '@';
+
         let get_regs_cnt = string_pos(regs, REG_SEP).ilog2() as usize;
 
 
@@ -198,7 +199,7 @@ const fn asm_marker() {
 }
 
 #[inline]
-const fn string_pos(string: u64, c: char) -> usize{
+pub const fn string_pos(string: u64, c: char) -> usize{
     let to_find_mask: u64 = repeat_byte(c as u8) as u64;
     let x: u64 = string ^ to_find_mask;
     let y: u64 = (x.overflowing_sub(0x0101010101010101).0) & !x & 0x8080808080808080;

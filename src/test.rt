@@ -1,2 +1,24 @@
-local x: i32 = 0
+local x: Int = 0
 print("hello there")
+
+func task wait strong task1() -> i32:
+
+end
+
+func task try weak task1() -> i32:
+
+end
+
+func task block strong task1() -> i32:
+
+end
+
+func task1() -> i32:
+
+end
+
+func task task1() -> i32:
+
+end
+
+struct Coordinates(x: f64, y: f64, z: f64)
