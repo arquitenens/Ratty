@@ -1,4 +1,8 @@
 local x: Int = 0
+local sigmafoid: Int = 0
+
+local sigmafoidsdsdawdadwpuppy: Int = 0
+
 print("hello there")
 
 func task wait strong task1() -> i32:

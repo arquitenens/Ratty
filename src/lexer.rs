@@ -1,8 +1,11 @@
+use std::arch::x86_64::{__m256i, _mm256_cmpeq_epi8, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_set1_epi8, _mm512_set1_epi64};
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet};
+use std::hint::black_box;
 use std::mem::{transmute, transmute_copy};
 use std::ptr;
 use std::str::SplitWhitespace;
+use std::time::Instant;
 use crate::instructions::IR;
 use crate::ir_parse::string_pos;
 
@@ -74,43 +77,70 @@ impl<'a> Lexer<'a> {
         return unsafe {transmute_copy(&[emptied, emptied])}
     }
 
-    pub const fn chunk_fill_zeros(chunk: &[u8]) -> [u8; 8]{
-        assert!(chunk.len() < 8);
-        let mut emptied = [0u8; 8];
-        unsafe {ptr::copy_nonoverlapping(chunk.as_ptr(), emptied.as_mut_ptr(), chunk.len())};
-        emptied
-    }
     pub fn parse_declaration(&mut self, s: &[[u8; 8]], start_at: usize) -> [u8; 16] {
-
+        println!("");
         if !self.remainder.is_empty() {
 
         }
+        //look if you don't have avx512 that's okay!!
+        //but if you can't do avx2 then come on that is not on me
+        //check ident_size
+        let ident_len = unsafe {
+            let ptr = s.as_ptr().cast::<u8>();
 
-        let mut first_chunk = true;
+            let loaded = _mm256_loadu_si256(ptr.cast::<__m256i>());
 
-        for chunk in s{
-            let chunk = if first_chunk {&Lexer::chunk_fill_zeros(&s[0][start_at..])} else {chunk};
-            first_chunk = false;
-            println!("s: {:?}", str::from_utf8(chunk).unwrap());
-            let p = string_pos(u64::from_le_bytes(*chunk), ' ');
-            if p != 8{
+            let target = _mm256_set1_epi8(58);
+            let mask = _mm256_cmpeq_epi8(loaded, target);
 
-            }
-        }
+            let bitmask = _mm256_movemask_epi8(mask);
+            assert_ne!(bitmask, 0, "the identifiers/variable names are capped at 32 characters");
+            bitmask.trailing_zeros() as usize - start_at
+        };
+
+        //parse ident
+
+        println!("ident_len: {}", ident_len);
+        let ident = self.try_parse_ident(start_at);
 
 
         return [0; 16]
     }
 
-    pub fn try_parse_ident(&mut self, s: &[[u8; 8]]) -> Result<(), i32>{
-        return Ok(())
+    //i don't know what an error looks like yet
+    //so it just returns a string, always apparently
+    pub fn try_parse_ident(&mut self, start_at: usize) -> [u8; 32]{
+        let mut first_chunk = true;
+        let mut ident_done = false;
+
+        //TODO replace with static array, e.g. 32 bytes, no reason to have-
+        //an ident with more than 32 chars
+        let mut ident_collect = [0u8; 32];
+
+
+
+        let mut total_offset = 0;
+
+
+        return ident_collect
     }
+
+    pub fn try_parse_type(){}
 
     pub fn try_function(&mut self) {}
 
-    pub fn valid_identifier(&self, ident: &str) -> bool {
-        matches!(ident.chars().next().unwrap(), 'a'..='z' | 'A'..='Z') && !self.hs.contains(ident)
+    #[inline]
+    pub const fn valid_char(&self, singleton_ident: char, is_first: bool) -> bool {
+        return if is_first{
+            matches!(singleton_ident, 'a'..='z' | 'A'..='Z' | '_' )
+        }else {
+            matches!(singleton_ident, 'a'..='z' | 'A'..='Z' | '_' | '0'..='9')
+        }
     }
+    pub fn valid_ident(&self, ident: &str) -> bool {
+        !self.hs.contains(ident)
+    }
+
     pub fn next_expected(next: &str, expected: &str) -> bool {
         next == expected
     }

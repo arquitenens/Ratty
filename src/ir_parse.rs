@@ -137,10 +137,8 @@ impl RawParser {
 
 
         let ty = unsafe {RType::from_raw(((regs >> 48) & 0xff) as u8)};
-
         //Filter out the ampersand, newline and the type since i already extracted it
         //leaving me with only the registers, they might have different numbers than their ascii counterpart but that's not important
-
         let maybe_regs0 = regs & !0xAAFFFFFFFFFF4040;
         let maybe_regs1 = (regs & !0xAAFFFFFF4040FFFF) >> 16;
         let maybe_regs2 = (regs & !0xAAFF4040FFFFFFFF) >> 32;
