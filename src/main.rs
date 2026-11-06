@@ -1,3 +1,4 @@
+#![feature(stdarch_const_x86)]
 use std::fs;
 use std::hint::black_box;
 use std::iter::repeat_with;
@@ -16,8 +17,6 @@ use crate::lexer::Lexer;
 
 fn main() {
 
-
-
     //around 480 million lines per second on my cpu
     let t_120m_ir = "./src/parsingtests/textual_ir/Bigfile.rir";
     let t_1m_ir = "./src/parsingtests/textual_ir/Bigfile1m.rir";
@@ -30,7 +29,7 @@ fn main() {
     assert!(read.is_ascii());
     let mut lexer = Lexer::new();
     for i in read.split("\n") {
-        lexer.try_lex_single(i);
+        let _ = lexer.try_lex_single(i);
     }
 
 

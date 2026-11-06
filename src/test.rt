@@ -1,7 +1,7 @@
-local x: Int = 0
-local sigmafoid: Int = 0
-
-local sigmafoidsdsdawdadwpuppy: Int = 0
+local x: ? = 0
+local x:Int=0
+local sigmaa: Int = 0
+local sigmapuppy: Int = 0
 
 print("hello there")
 

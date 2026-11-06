@@ -1,3 +1,4 @@
+use std::arch::{asm, naked_asm};
 use std::arch::x86_64::{__m256i, _mm256_cmpeq_epi8, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_set1_epi8, _mm512_set1_epi64};
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet};
@@ -14,6 +15,9 @@ pub struct Lexer<'a>{
     hs: HashSet<&'a str>,
     remainder: [u8; 8]
 }
+
+
+
 impl<'a> Lexer<'a> {
     pub fn new() -> Lexer<'a> {
         Lexer{
@@ -28,12 +32,12 @@ impl<'a> Lexer<'a> {
             remainder: [0u8; 8]
         }
     }
-    pub fn new_remainder<'rem>(&mut self, remainder: [u8; 8]) {
+    pub const fn new_remainder<'rem>(&mut self, remainder: [u8; 8]) {
         self.remainder = remainder;
     }
 
     //produces the textual IR which no one wants to read lol
-    pub fn try_lex_single(&mut self, line: &str) -> &[u8; 16] {
+    pub fn try_lex_single(&mut self, line: &str) -> [u8; 16] {
         //println!("line: {:?}", line);
         //No keyword is longer than 8 chars so we use the string pos func
         let emptied = [0u8; 8];
@@ -65,7 +69,9 @@ impl<'a> Lexer<'a> {
         self.new_remainder(keyword_buff);
 
         let x = match first {
-            exclude @ ("local" | "global" | "const") => self.parse_declaration(chunks, exclude.len() + 1),
+            exclude @ ("local" | "global" | "const") => {
+                self.parse_declaration(chunks, exclude.len() + 1)
+            },
             _ => {
                 println!("unrecognized keyword: {:?}", first);
 
@@ -77,54 +83,53 @@ impl<'a> Lexer<'a> {
         return unsafe {transmute_copy(&[emptied, emptied])}
     }
 
-    pub fn parse_declaration(&mut self, s: &[[u8; 8]], start_at: usize) -> [u8; 16] {
-        println!("");
-        if !self.remainder.is_empty() {
+    pub const fn parse_declaration(&mut self, s: &[[u8; 8]], start_at: usize) -> &str{
+        let ident = self.parse_identifier(s, start_at);
+        let ty = ();
+        let val = ();
 
-        }
+        ident
+
+    }
+
+    pub fn parse_type(){}
+
+    #[inline]
+    pub const fn parse_identifier(&mut self, s: &[[u8; 8]], start_at: usize) -> &str {
         //look if you don't have avx512 that's okay!!
         //but if you can't do avx2 then come on that is not on me
         //check ident_size
+        //TODO proper bounds checking probably only works since theres lot of spaces in a usual text
+        //It probably doesnt matter because who in their right mind would write "local x = 0\n" like that's mad
         let ident_len = unsafe {
+
             let ptr = s.as_ptr().cast::<u8>();
 
             let loaded = _mm256_loadu_si256(ptr.cast::<__m256i>());
 
-            let target = _mm256_set1_epi8(58);
+            //well the ident ends with a colon
+            let target = _mm256_set1_epi8(':' as i8);
             let mask = _mm256_cmpeq_epi8(loaded, target);
 
             let bitmask = _mm256_movemask_epi8(mask);
-            assert_ne!(bitmask, 0, "the identifiers/variable names are capped at 32 characters");
+            assert!(bitmask != 0, "the identifiers/variable names are capped at 32 characters");
             bitmask.trailing_zeros() as usize - start_at
+
         };
 
-        //parse ident
+        //not using a "transmute" because im really safe and never using any unsafe code
+        let flattened = s.as_flattened();
 
-        println!("ident_len: {}", ident_len);
-        let ident = self.try_parse_ident(start_at);
+        let ident_bytes = unsafe {
+            core::slice::from_raw_parts(
+                flattened.as_ptr().add(start_at),
+                ident_len,
+            )
+        };
 
-
-        return [0; 16]
+        return unsafe {str::from_utf8_unchecked(&ident_bytes)};
     }
-
-    //i don't know what an error looks like yet
-    //so it just returns a string, always apparently
-    pub fn try_parse_ident(&mut self, start_at: usize) -> [u8; 32]{
-        let mut first_chunk = true;
-        let mut ident_done = false;
-
-        //TODO replace with static array, e.g. 32 bytes, no reason to have-
-        //an ident with more than 32 chars
-        let mut ident_collect = [0u8; 32];
-
-
-
-        let mut total_offset = 0;
-
-
-        return ident_collect
-    }
-
+    
     pub fn try_parse_type(){}
 
     pub fn try_function(&mut self) {}
