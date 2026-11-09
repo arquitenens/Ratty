@@ -1,4 +1,6 @@
 #![feature(stdarch_const_x86)]
+extern crate core;
+
 use std::fs;
 use std::hint::black_box;
 use std::iter::repeat_with;

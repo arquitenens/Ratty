@@ -196,6 +196,8 @@ const fn asm_marker() {
     std::hint::black_box(());
 }
 
+
+//got this from hackers delight
 #[inline]
 pub const fn string_pos(string: u64, c: char) -> usize{
     let to_find_mask: u64 = repeat_byte(c as u8) as u64;
@@ -205,4 +207,4 @@ pub const fn string_pos(string: u64, c: char) -> usize{
 }
 
 #[inline(always)]
-const fn repeat_byte(b: u8) -> usize { (b as usize) * (usize::MAX / 255) }
+pub const fn repeat_byte(b: u8) -> usize { (b as usize) * (usize::MAX / 255) }

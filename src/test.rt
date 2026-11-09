@@ -1,7 +1,11 @@
-local x: ? = 0
-local x:Int=0
-local sigmaa: Int = 0
-local sigmapuppy: Int = 0
+local x: Int = 0
+local xx: Int = 0
+local xxx: Int = 0
+local xxxx: Int = 0
+local xxxxx: Int = 0
+local xxxxxx: Int = 0
+local xxxxxxx: Int = 0
+local xxxxxxxx: Int = 0
 
 print("hello there")
 
