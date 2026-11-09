@@ -19,8 +19,8 @@ pub struct Lexer<'a>{
     >,
     remainder: [u8; 8]
 }
-
 //TODO if i forget to change these values im in trouble
+//in case i want tl
 const SHORTEST_KEYWORD: usize = 3;
 const LONGEST_KEYWORD: usize = 6;
 
@@ -90,6 +90,7 @@ impl<'a> Lexer<'a> {
 
         let x = match first {
             exclude @ ("local" | "global" | "const") => {
+                //self.parse_declaration(chunks, exclude.len() + 1);
 
                 let now = Instant::now();
                 for i in 0..100_000_000{
@@ -98,6 +99,7 @@ impl<'a> Lexer<'a> {
                 }
                 let elapsed = now.elapsed();
                 println!("elapsed {:?}", elapsed);
+
             },
             _ => {
                 //println!("unrecognized keyword: {:?}", first);
@@ -160,6 +162,7 @@ impl<'a> Lexer<'a> {
 
             let loaded = _mm256_loadu_si256(ptr.cast::<__m256i>());
 
+
             //well the ident ends with a colon
             let target = _mm256_set1_epi8(':' as i8);
             let mask = _mm256_cmpeq_epi8(loaded, target);
@@ -179,7 +182,7 @@ impl<'a> Lexer<'a> {
         //im using 64 since no alphanumeric ascii char is 64, thus I can easily filter out empty spaces
 
         //println!("indent_len {:?}", ident_len);
-        let i = &raw[0..ident_len];
+        let i = &raw[start_at..start_at + ident_len];
 
         self.check_valid_ident(i);
 
@@ -219,7 +222,11 @@ impl<'a> Lexer<'a> {
             let max_kw = self.keywords[len].len();
             let mut current_kw = 0;
             while current_kw < max_kw{
-                assert!(self.keywords[len][current_kw].as_bytes() != &lil_buff[..len], "your identifiers cant be the same as a keyword");
+                let c = &lil_buff[..len];
+                assert!(self.keywords[len][current_kw].as_bytes() != &lil_buff[..len],
+                        "your identifiers cant be the same as a keyword {:?}",
+                        str::from_utf8(c)
+                );
                 current_kw += 1;
             }
 
