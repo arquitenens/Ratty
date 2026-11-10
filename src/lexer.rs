@@ -13,19 +13,40 @@ use crate::instructions::IR;
 use crate::ir_parse::{repeat_byte, string_pos};
 
 
-pub struct Lexer<'a>{
+//TODO better approach than nested vec
+pub struct Lexer{
     keywords: Vec<
-        &'a [&'a str]
+        Vec<Keyword>
     >,
     remainder: [u8; 8]
 }
 //TODO if i forget to change these values im in trouble
-//in case i want tl
+//not yet used, maybe later for some small static optimization
 const SHORTEST_KEYWORD: usize = 3;
 const LONGEST_KEYWORD: usize = 6;
 
-impl<'a> Lexer<'a> {
-    pub fn new() -> Lexer<'a> {
+
+#[repr(align(8))]
+struct Keyword{
+    pub(crate) hash: u64,
+    //raw name for error reporting
+    pub(crate) raw_name: [u8; 8],
+}
+impl Keyword{
+    pub fn make(s: &str) -> Keyword{
+        let mut kw = [32u8; 8];
+        let mut bytes = [64u8; 8];
+        bytes[..s.len()].copy_from_slice(s.as_bytes());
+        kw[..s.len()].copy_from_slice(s.as_bytes());
+        return Keyword{
+            hash: u64::from_le_bytes(bytes),
+            raw_name: kw
+        }
+    }
+}
+
+impl<'a> Lexer {
+    pub fn new() -> Lexer {
         Lexer{
             //TODO probably precalculate the "hashes"/masks and store them statically for performance
             //the reason this is not a static array and instead a growable vec is-
@@ -34,25 +55,28 @@ impl<'a> Lexer<'a> {
             //They cant be empty otherwise the returned pointer wont actually have an address
             keywords: vec![
                 //0 case, reserved to not handle awkward indexing
-                &["_"],
+                vec![Keyword::make("_")],
                 //1 len, probably unused
-                &["_"],
+                vec![Keyword::make("_")],
                 //2 len
-                &["_"],
+                vec![Keyword::make("_")],
                 //3 len
-                &["end"],
+                vec![Keyword::make("end")],
                 //4 len
-                &["task", "func",],
+                vec![Keyword::make("task"), Keyword::make("func")],
                 //5 len
-                &["local"],
+                vec![Keyword::make("local")],
                 //6 len
-                &["struct", "global"],
+                vec![Keyword::make("struct"), Keyword::make("global")],
                 //7 len
-                &["_"]
+                vec![Keyword::make("_")]
             ],
             remainder: [0u8; 8]
         }
     }
+
+
+
     pub const fn new_remainder<'rem>(&mut self, remainder: [u8; 8]) {
         self.remainder = remainder;
     }
@@ -95,10 +119,10 @@ impl<'a> Lexer<'a> {
 
                 let now = Instant::now();
                 for i in 0..100_000_000{
-                    let y = black_box("xxxxxxx".as_bytes());
-                    let x = self.check_valid_ident(y);
-                    black_box(x);
+                    let x = self.parse_declaration(chunks, exclude.len() + 1);
+                   black_box(x);
                 }
+                let x = self.parse_declaration(chunks, exclude.len() + 1);
                 let elapsed = now.elapsed();
                 println!("elapsed {:?}", elapsed);
 
@@ -185,11 +209,9 @@ impl<'a> Lexer<'a> {
 
 
         let raw = s.as_flattened();
-
         //no keyword is longer than 8 chars
         //im using 64 since no alphanumeric ascii char is 64, thus I can easily filter out empty spaces
 
-        //println!("indent_len {:?}", ident_len);
         let i = &raw[start_at..start_at + ident_len];
 
         self.check_valid_ident(i);
@@ -200,6 +222,7 @@ impl<'a> Lexer<'a> {
     }
 
     //panic for now, error handling later
+    //TODO fix performance, its really bad
     pub fn check_valid_ident(&self, s: &[u8]){
         let mut lil_buff = [64u8; 8];
 
@@ -209,46 +232,31 @@ impl<'a> Lexer<'a> {
         //but for flexibility in terms of user-defined keywords it stays simple
         if let len @ ..8 = s.len(){
 
+            let max_kw = self.keywords[len].len();
+
+
             unsafe {
                 ptr::copy_nonoverlapping(s.as_ptr(), lil_buff.as_mut_ptr(), len);
             }
 
-
-            //the 64 i filled the buffer with before
-            //for the keen eye you notice im ignoring 48 to 57 because well.. no keyword has numbers in it! but an identifier might.
-            //but im looking for keywords not identifiers so uhm i dont care lol
+            //the 64 i filled the buffer with before, maybe future mask for speedup
             const MASK: u8 = '@' as u8;
             //TODO this is very naive and very slow dropping performance by like 3 times
 
-            let helping_ref = &self.keywords[len];
-
-            let max_kw = self.keywords[len].len();
             let mut current_kw = 0;
-            let mut big_buff = [64u8; 8];
 
+            let a = u64::from_le_bytes(lil_buff);
             while current_kw < max_kw{
-                let a = u64::from_le_bytes(lil_buff);
-
-                unsafe {
-
-                    ptr::copy_nonoverlapping(
-                        self.keywords[len][current_kw].as_ptr(),
-                                             big_buff.as_mut_ptr(),
-                                             len
-                    );
-                }
-
-                let b = u64::from_le_bytes(big_buff);
-
-                assert!((a ^ b) != 0,
+                let b = self.keywords[len][current_kw].hash;
+                //println!("kw: {:?}", str::from_utf8(&b.to_le_bytes()[0..len]).unwrap());
+                //TODO proper error checking later
+                assert!(a != b,
                         "You cant use keyword: {:?} as identifier",
                         str::from_utf8(&b.to_le_bytes()[0..len]).unwrap()
                 );
 
                 current_kw += 1;
             }
-
-
 
         }
     }
