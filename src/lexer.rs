@@ -31,13 +31,14 @@ impl<'a> Lexer<'a> {
             //the reason this is not a static array and instead a growable vec is-
             //im thinking about being able to "overwrite" and define custom keywords at compile-time and or runtime
             //which requires being apple to append keywords as long as they are less than 8 chars long
+            //They cant be empty otherwise the returned pointer wont actually have an address
             keywords: vec![
                 //0 case, reserved to not handle awkward indexing
-                &[""],
+                &["_"],
                 //1 len, probably unused
-                &[""],
+                &["_"],
                 //2 len
-                &[""],
+                &["_"],
                 //3 len
                 &["end"],
                 //4 len
@@ -47,7 +48,7 @@ impl<'a> Lexer<'a> {
                 //6 len
                 &["struct", "global"],
                 //7 len
-                &[""]
+                &["_"]
             ],
             remainder: [0u8; 8]
         }
@@ -90,15 +91,18 @@ impl<'a> Lexer<'a> {
 
         let x = match first {
             exclude @ ("local" | "global" | "const") => {
-                //self.parse_declaration(chunks, exclude.len() + 1);
+                //let x = self.parse_declaration(chunks, exclude.len() + 1);
 
                 let now = Instant::now();
                 for i in 0..100_000_000{
-                    let x = self.parse_declaration(chunks, exclude.len() + 1);
+                    let y = black_box("xxxxxxx".as_bytes());
+                    let x = self.check_valid_ident(y);
                     black_box(x);
                 }
                 let elapsed = now.elapsed();
                 println!("elapsed {:?}", elapsed);
+
+
 
             },
             _ => {
@@ -122,12 +126,16 @@ impl<'a> Lexer<'a> {
 
         let non_full = LOOKUP[stripped_offset] as usize * idx_8;
         //assumes lil endian machines
-        let mut extended = u64::from_le_bytes(s[non_full]);
+        let mut extended = u64::from_ne_bytes(s[non_full]);
 
         extended >>= stripped_offset * 8;
         //should be the opposite endian but there doesn't seem to be a
         //"to_opposite_bytes" function
+        //the rest of the code probably doesn't even work on be anyway so I don't really know why im doing this
+        #[cfg(target_endian = "big")]
+        return (extended.to_le_bytes(), stripped_offset);
 
+        #[cfg(target_endian = "little")]
         return (extended.to_be_bytes(), stripped_offset);
     }
 
@@ -190,14 +198,6 @@ impl<'a> Lexer<'a> {
 
         return (x, ident_len + start_at);
     }
-    
-    pub fn parse_type(&mut self, first: [u8; 8], s: &[[u8; 8]], z_offset: usize) -> (&str, usize) {
-        return ("", z_offset);
-    }
-
-    pub fn parse_value(&mut self, first: [u8; 8], s: &[[u8; 8]], z_offset: usize) -> (&str, usize) {
-        return ("", z_offset);
-    }
 
     //panic for now, error handling later
     pub fn check_valid_ident(&self, s: &[u8]){
@@ -213,26 +213,53 @@ impl<'a> Lexer<'a> {
                 ptr::copy_nonoverlapping(s.as_ptr(), lil_buff.as_mut_ptr(), len);
             }
 
+
             //the 64 i filled the buffer with before
             //for the keen eye you notice im ignoring 48 to 57 because well.. no keyword has numbers in it! but an identifier might.
             //but im looking for keywords not identifiers so uhm i dont care lol
             const MASK: u8 = '@' as u8;
-            //TODO this is very naive and very slow dropping performance by like 3 times when the ident is 6 in length
+            //TODO this is very naive and very slow dropping performance by like 3 times
+
+            let helping_ref = &self.keywords[len];
 
             let max_kw = self.keywords[len].len();
             let mut current_kw = 0;
+            let mut big_buff = [64u8; 8];
+
             while current_kw < max_kw{
-                let c = &lil_buff[..len];
-                assert!(self.keywords[len][current_kw].as_bytes() != &lil_buff[..len],
-                        "your identifiers cant be the same as a keyword {:?}",
-                        str::from_utf8(c)
+                let a = u64::from_le_bytes(lil_buff);
+
+                unsafe {
+
+                    ptr::copy_nonoverlapping(
+                        self.keywords[len][current_kw].as_ptr(),
+                                             big_buff.as_mut_ptr(),
+                                             len
+                    );
+                }
+
+                let b = u64::from_le_bytes(big_buff);
+
+                assert!((a ^ b) != 0,
+                        "You cant use keyword: {:?} as identifier",
+                        str::from_utf8(&b.to_le_bytes()[0..len]).unwrap()
                 );
+
                 current_kw += 1;
             }
 
 
+
         }
     }
+    pub fn parse_type(&mut self, first: [u8; 8], s: &[[u8; 8]], z_offset: usize) -> (&str, usize) {
+        return ("", z_offset);
+    }
+
+    pub fn parse_value(&mut self, first: [u8; 8], s: &[[u8; 8]], z_offset: usize) -> (&str, usize) {
+        return ("", z_offset);
+    }
+
     #[inline]
     pub const fn valid_char(&self, singleton_ident: char, is_first: bool) -> bool {
         return if is_first{
