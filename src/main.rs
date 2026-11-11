@@ -1,5 +1,4 @@
-#![feature(stdarch_const_x86)]
-extern crate core;
+
 
 use std::fs;
 use std::hint::black_box;
@@ -11,6 +10,7 @@ mod instructions;
 mod vm;
 mod ir_parse;
 mod lexer;
+mod util;
 
 use MaybeRedundant::*;
 use crate::ir_parse::RawParser;

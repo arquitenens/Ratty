@@ -64,9 +64,9 @@ impl RawParser {
             let instr = unsafe {IROps::from_raw(c[6])};
             //because its a pow 2 being 64 in ascii owowowow :33
             const REG_SEP: char = '@';
-            let get_regs_cnt = string_pos(u64::from_le_bytes(regs), REG_SEP).ilog2() as usize;
+            let get_regs_cnt = string_pos(u64::from_ne_bytes(regs), REG_SEP).ilog2() as usize;
 
-            let raw_reg = u64::from_le_bytes(regs);
+            let raw_reg = u64::from_ne_bytes(regs);
 
             let ty = unsafe {RType::from_raw(regs[6])};
 
@@ -207,4 +207,4 @@ pub const fn string_pos(string: u64, c: char) -> usize{
 }
 
 #[inline(always)]
-pub const fn repeat_byte(b: u8) -> usize { (b as usize) * (usize::MAX / 255) }
+pub const fn repeat_byte(b: u8) -> u64 { (b as u64) * (u64::MAX / 255) }
