@@ -18,7 +18,7 @@ enum KeywordSlot{
 
 pub struct Lexer {
     //no keyword is longer than 8 thats why 8 static array len thing
-    keywords: [ConstVec<Keyword, 16>; 8],
+    keywords: [ConstVec<Keyword, 8>; 8],
     remainder: [u8; 8]
 }
 
@@ -34,13 +34,19 @@ struct Keyword{
 }
 
 impl Keyword{
-    pub fn make(s: &str) -> Keyword{
+    pub const fn make(s: &str) -> Keyword{
         //32 for easy ascii stripping
         let mut kw = [32u8; 8];
         //64 easier for masking
         let mut bytes = [64u8; 8];
-        bytes[..s.len()].copy_from_slice(s.as_bytes());
-        kw[..s.len()].copy_from_slice(s.as_bytes());
+
+        let raw_s = s.as_bytes();
+        let mut counter = 0usize;
+        while counter < s.len() {
+            bytes[counter] = raw_s[0];
+            kw[counter] = raw_s[0];
+            counter += 1;
+        }
         return Keyword{
             hash: u64::from_ne_bytes(bytes),
             raw_name: kw
@@ -49,7 +55,7 @@ impl Keyword{
 }
 
 impl<'a> Lexer {
-    pub fn new() -> Lexer {
+    pub const fn new() -> Lexer {
         Lexer{
             //the reason this is not a static array and instead a growable vec is-
             //im thinking about being able to "overwrite" and define custom keywords at compile-time and or runtime
@@ -63,7 +69,7 @@ impl<'a> Lexer {
                 //2 len
                 ConstVec::from_const_array([Keyword::make("_")]),
                 //3 len
-                ConstVec::from_const_array([Keyword::make("end")]),
+                ConstVec::from_const_array([Keyword::make("end"), Keyword::make("dyn")]),
                 //4 len
                 ConstVec::from_const_array([Keyword::make("task"), Keyword::make("func")]),
                 //5 len
@@ -80,24 +86,35 @@ impl<'a> Lexer {
 
     //produces the textual IR which no one wants to read lol
     pub fn try_lex_single(&mut self, line: &'a str) -> [u8; 16] {
+        if line.is_empty(){
+            //well we can just ignore empty lies
+            return [0; 16];
+        }
         assert!(line.is_ascii(), "Only ascii is allowed");
+
+        let raw_lines = line.as_bytes();
         //after this unchecked conversions should be fine
 
         let emptied = [0u8; 8];
 
-        let (chunks, rem) = line.as_bytes().as_chunks::<8>();
 
 
+        let kw = Self::load8_extend(raw_lines);
 
-        let kw = Self::load8_extend(&chunks[0]);
-        println!("key {:?}", str::from_utf8(&kw));
+        let maybe_kw = Self::slice8_split_and_extend_at_char::<' ', '@'>(kw);
 
-        let x = match "" {
-            exclude @ ("local" | "global" | "const") if self.check_keyword("") => {
+        println!("maybe_kw: {:?}", str::from_utf8(&maybe_kw));
+
+
+        let x = match &maybe_kw {
+            //I don't want to do it like this but rust seems a bit stupid with its const matching
+            exclude @ (b"local@@@" | b"global@@" | b"const@@@") => {
+                let raw_ptr: &[u8] = unsafe {*raw_lines.as_ptr().byte_add(8).cast()};
+                self.parse_ident(raw_ptr);
             },
             _ => {
-                //println!("unrecognized keyword: {:?}", first);
 
+                //println!("unrecognized keyword: {:?}", first);
                 return unsafe{transmute_copy(&[emptied, emptied])}
             }
         };
@@ -105,11 +122,6 @@ impl<'a> Lexer {
         //Ignore the clear UB for now, im not using the return value any time soon nor am i constructing it,
         //its just so the code compiles
         return unsafe {transmute_copy(&[emptied, emptied])}
-    }
-
-    //the argument comes from chunks which are 8 in size
-    const fn check_keyword(&self, maybe_key: &str) -> bool{
-        self.kw_hash(maybe_key).is_some()
     }
 
     //i don't know if this is as fast as i want it
@@ -126,6 +138,11 @@ impl<'a> Lexer {
         }
 
         return None;
+    }
+
+
+    const fn parse_ident(&mut self, kw: &[u8]){
+        
     }
 
     //it's not unsafe because it just returns zero which is pretty useless techniclly
@@ -151,15 +168,18 @@ impl<'a> Lexer {
         return a == b;
     }
 
+
+
     const fn is_full(src: &[u8; 8]) -> bool {
         //if index 7 is filled then logically all others must also be filled
-        src[7] != 64
+        src[7] != b'@'
     }
 
     const fn load8_extend(src: &[u8]) -> [u8; 8]{
         //64 or @ for easier masking since no used ascii value will be that
         let mut emptied = [64u8; 8];
 
+        //TODO a while loop is probably just as fast if not faster
         let len = if src.len() >= 8 {8} else { src.len() };
 
         unsafe {
@@ -176,37 +196,39 @@ impl<'a> Lexer {
     //but putting a branch against something like that in a private function is not worth it
     #[inline]
     const fn slice8shorten_static_zx<const N: usize>(src: [u8; 8]) -> [u8; 8]{
+        assert!(N > 0 && N < 8,
+                "N should be between 1..8, 0 and 8 just return an empty slice");
         let mask = (1u64 << ((N & 7) << 3)).wrapping_sub(1);
-        (u64::from_ne_bytes(src) & mask).to_ne_bytes()
+        (u64::from_ne_bytes(src) & mask).to_le_bytes()
     }
     #[inline]
     const fn slice8shorten_zx(src: [u8; 8], new_len: usize) -> [u8; 8]{
         let mask = (1u64 << ((new_len & 7) << 3)).wrapping_sub(1);
-        (u64::from_ne_bytes(src) & mask).to_ne_bytes()
+        (u64::from_ne_bytes(src) & mask).to_le_bytes()
     }
-    const fn slice8shorten_ex_with_char<const C: char>(src: [u8; 8], new_len: usize) -> [u8; 8]{
+    const fn slice8shorten_at_n_extend_with_char<const C: char>(src: [u8; 8], new_len: usize) -> [u8; 8]{
         let shift = (new_len & 7) << 3;
         let clear = (1u64 << shift).wrapping_sub(1);
         //dynamically make new mask
         //the compiler should usually replace the mask with a constant
         let mask: u64 = Self::repeat_byte(C as u8) << shift;
-        ((u64::from_ne_bytes(src) & clear) | mask).to_ne_bytes()
+        ((u64::from_ne_bytes(src) & clear) | mask).to_le_bytes()
     }
 
     const fn slice8_split_and_extend_at_char<const AT: char, const WITH: char>(src: [u8; 8]) -> [u8; 8]{
         return match Self::char_pos::<AT>(u64::from_ne_bytes(src))  {
-            p @ 0..8 => Self::slice8shorten_ex_with_char::<WITH>(src, p),
+            p @ 0..8 => Self::slice8shorten_at_n_extend_with_char::<WITH>(src, p),
             _ => src
         }
     }
     #[inline]
-    pub const fn char_pos<const C: char>(string: u64) -> usize{
+    const fn char_pos<const C: char>(string: u64) -> usize{
         let to_find_mask: u64 = Self::repeat_byte(C as u8);
         let x: u64 = string ^ to_find_mask;
         let y: u64 = (x.overflowing_sub(0x0101010101010101).0) & !x & 0x8080808080808080;
         (y.trailing_zeros() >> 3) as usize
     }
     #[inline(always)]
-    pub const fn repeat_byte(b: u8) -> u64 { (b as u64) * (u64::MAX / 255) }
+    const fn repeat_byte(b: u8) -> u64 { (b as u64) * (u64::MAX / 255) }
 
 }
