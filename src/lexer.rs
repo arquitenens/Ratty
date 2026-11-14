@@ -127,7 +127,14 @@ impl<'a> Lexer {
 
                     let new = Self::add_u8_slice_offset(raw_lines, stripped_pos + 1);
 
-                    self.parse_ident(new)
+                    let now = Instant::now();
+                    for i in 0..100_000_000{
+                        let res = self.parse_ident(new);
+                        black_box(res);
+                    }
+                    let elapsed = now.elapsed();
+                    println!("elapsed: {:?}", elapsed);
+
                 }
 
             },
@@ -145,10 +152,12 @@ impl<'a> Lexer {
 
 
 
-    fn parse_ident(&mut self, kw: Stream) {
+    const fn parse_ident(&mut self, kw: Stream) -> &str {
         let upper = kw.len();
         let mut index = 0usize;
         let mut test_for_keyword = true;
+
+        let mut keyword_len = 0usize;
 
         //highest needed buffer
         let mut kw_buffer = [32u8; 39];
@@ -163,16 +172,12 @@ impl<'a> Lexer {
             //regardless, after that branch fails the loop is over
             index += 1;
 
+            keyword_len += maybe_valid_pos;
             if test_for_keyword{
                 self.check_keyword(ident, maybe_valid_pos);
             }
 
-            if let pos @ 0..8 = maybe_valid_pos{
-                let mut counter = 0;
-                while counter < pos  {
-                    kw_buffer[counter] = ident[counter];
-                    counter += 1;
-                }
+            if let _pos @ 0..8 = maybe_valid_pos{
                 break
             }
             //keywords are only 8 chars max so after it has already be proven to not be between 0..8 it must be 8
@@ -183,7 +188,7 @@ impl<'a> Lexer {
             match index{
                 0..2 => {}
 
-                2..=3 => {
+                2..4 => {
                     self.emit_warning(Analyzer::Warning("Identifier length too long"));
                 }
                 4 => {
@@ -191,15 +196,15 @@ impl<'a> Lexer {
                     //TODO temporary, proper handling later
                     panic!("identifier length too long");
                 }
+                //if the code above already this cannot be reached
+                //since the index only increments by one
                 _ => unsafe {unreachable_unchecked()}
             }
 
-            todo!()
-
         }
-
-        println!("ident: {:?}", str::from_utf8(kw_buffer.trim_ascii_end()));
-
+        unsafe {
+            return str::from_utf8_unchecked(&*slice_from_raw_parts(kw.as_ptr(), keyword_len));
+        }
 
     }
 
