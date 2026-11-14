@@ -1,6 +1,9 @@
 use std::arch;
 use std::arch::x86_64::_pext_u64;
-use std::mem::transmute_copy;
+use std::hint::{black_box, unreachable_unchecked};
+use std::mem::{transmute, transmute_copy};
+use std::ptr::slice_from_raw_parts;
+use std::time::Instant;
 use crate::lexer::KeywordSlot::Occupied;
 use crate::util::ConstVec;
 //TODO better approach than nested vec
@@ -13,6 +16,13 @@ enum KeywordSlot{
     Empty
 }
 
+#[repr(u8)]
+#[derive(Debug, Clone, Copy)]
+enum Analyzer{
+    Warning(&'static str),
+    Error(&'static str),
+}
+
 
 
 
@@ -22,12 +32,14 @@ pub struct Lexer {
     remainder: [u8; 8]
 }
 
-
+pub(crate) type Stream<'a> = &'a[u8];
+pub(crate) type StreamChunk = [u8; 8];
 
 #[repr(align(8))]
 #[derive(Copy,Clone)]
 struct Keyword{
     pub(crate) hash: u64,
+    pub(crate) stripped_len: usize,
     //raw name for error reporting
     //it cant really be a static str slice since it might change
     pub(crate) raw_name: [u8; 8],
@@ -43,12 +55,15 @@ impl Keyword{
         let raw_s = s.as_bytes();
         let mut counter = 0usize;
         while counter < s.len() {
-            bytes[counter] = raw_s[0];
-            kw[counter] = raw_s[0];
+            bytes[counter] = raw_s[counter];
+            kw[counter] = raw_s[counter];
             counter += 1;
         }
+
+
         return Keyword{
             hash: u64::from_ne_bytes(bytes),
+            stripped_len: s.len(),
             raw_name: kw
         }
     }
@@ -92,10 +107,10 @@ impl<'a> Lexer {
         }
         assert!(line.is_ascii(), "Only ascii is allowed");
 
-        let raw_lines = line.as_bytes();
+        let raw_lines: Stream = line.as_bytes();
         //after this unchecked conversions should be fine
 
-        let emptied = [0u8; 8];
+        let emptied: StreamChunk = [0u8; 8];
 
 
 
@@ -103,14 +118,18 @@ impl<'a> Lexer {
 
         let maybe_kw = Self::slice8_split_and_extend_at_char::<' ', '@'>(kw);
 
-        println!("maybe_kw: {:?}", str::from_utf8(&maybe_kw));
-
-
         let x = match &maybe_kw {
             //I don't want to do it like this but rust seems a bit stupid with its const matching
             exclude @ (b"local@@@" | b"global@@" | b"const@@@") => {
-                let raw_ptr: &[u8] = unsafe {*raw_lines.as_ptr().byte_add(8).cast()};
-                self.parse_ident(raw_ptr);
+
+                unsafe {
+                    let stripped_pos = Self::char_pos::<'@'>(u64::from_le_bytes(maybe_kw));
+
+                    let new = Self::add_u8_slice_offset(raw_lines, stripped_pos + 1);
+
+                    self.parse_ident(new)
+                }
+
             },
             _ => {
 
@@ -124,26 +143,84 @@ impl<'a> Lexer {
         return unsafe {transmute_copy(&[emptied, emptied])}
     }
 
-    //i don't know if this is as fast as i want it
-    const fn kw_hash(&self, of: &str) -> Option<u64>{
-        let keywords = &self.keywords[of.len()];
-        let mut counter = 0;
-        while counter < keywords.len() {
-            let a = of.as_bytes();
-            let hash = keywords.get(counter).hash.to_le_bytes();
-            if Self::raw_cmp(a, &hash){
-                return Some(u64::from_ne_bytes(hash));
+
+
+    fn parse_ident(&mut self, kw: Stream) {
+        let upper = kw.len();
+        let mut index = 0usize;
+        let mut test_for_keyword = true;
+
+        //highest needed buffer
+        let mut kw_buffer = [32u8; 39];
+
+        while index < upper {
+            //0 offset with loop start
+            let offset_kw_stream = unsafe {Self::add_u8_slice_offset(kw, 8 * index)};
+            let ident = Self::load8_extend(offset_kw_stream);
+            let maybe_valid_pos = Self::char_pos::<':'>(u64::from_le_bytes(ident));
+
+            //the pos is only relevant on the last slice, if it is not 8 char aligned (by chance)
+            //regardless, after that branch fails the loop is over
+            index += 1;
+
+            if test_for_keyword{
+                self.check_keyword(ident, maybe_valid_pos);
             }
-            counter += 1;
+
+            if let pos @ 0..8 = maybe_valid_pos{
+                let mut counter = 0;
+                while counter < pos  {
+                    kw_buffer[counter] = ident[counter];
+                    counter += 1;
+                }
+                break
+            }
+            //keywords are only 8 chars max so after it has already be proven to not be between 0..8 it must be 8
+            test_for_keyword = false;
+
+            //This branch doesn't need to exist if keywords are less than 16, thus index is less 2, so an asm LEA+jmp might be good
+            //but asm doesn't work in const, so I'll have to see
+            match index{
+                0..2 => {}
+
+                2..=3 => {
+                    self.emit_warning(Analyzer::Warning("Identifier length too long"));
+                }
+                4 => {
+                    self.emit_error(Analyzer::Error("that"));
+                    //TODO temporary, proper handling later
+                    panic!("identifier length too long");
+                }
+                _ => unsafe {unreachable_unchecked()}
+            }
+
+            todo!()
+
         }
 
-        return None;
-    }
+        println!("ident: {:?}", str::from_utf8(kw_buffer.trim_ascii_end()));
 
 
-    const fn parse_ident(&mut self, kw: &[u8]){
-        
     }
+
+     const fn check_keyword(&mut self, maybe_kw: StreamChunk, pos: usize) -> bool{
+
+         unsafe {
+             let trimmed_raw = Self::slice8shorten_at_n_extend_with_char::<'@'>(maybe_kw, pos);
+             let trimmed = str::from_utf8_unchecked(&trimmed_raw);
+             if self.kw_hash(trimmed, pos).is_some(){
+                 self.emit_error(Analyzer::Error("Can use keywords as identifiers"));
+                 //TODO temporary, better error handling later
+                 panic!("keyword used as ident");
+             }
+         }
+
+        return true;
+    }
+
+    const fn emit_warning(&mut self, warning: Analyzer){}
+
+    const fn emit_error(&mut self, error: Analyzer){}
 
     //it's not unsafe because it just returns zero which is pretty useless techniclly
     const fn kw_hash_unchecked(&self, of: &str) -> u64{
@@ -160,6 +237,22 @@ impl<'a> Lexer {
 
         return 0;
     }
+    //i don't know if this is as fast as i want it
+    const fn kw_hash(&self, of: &str, len: usize) -> Option<u64>{
+        let keywords = &self.keywords[len & 7];
+        let mut counter = 0;
+        while counter < keywords.len() {
+            let a = of.as_bytes();
+            let hash = keywords.get(counter).hash.to_le_bytes();
+            if Self::raw_cmp(a, &hash){
+                return Some(u64::from_ne_bytes(hash));
+            }
+            counter += 1;
+        }
+
+        return None;
+    }
+
 
     const fn raw_cmp(a: &[u8], b: &[u8]) -> bool{
         let a = u64::from_ne_bytes(Self::load8_extend(a));
@@ -175,7 +268,7 @@ impl<'a> Lexer {
         src[7] != b'@'
     }
 
-    const fn load8_extend(src: &[u8]) -> [u8; 8]{
+    const fn load8_extend(src: Stream) -> StreamChunk{
         //64 or @ for easier masking since no used ascii value will be that
         let mut emptied = [64u8; 8];
 
@@ -195,18 +288,18 @@ impl<'a> Lexer {
     //where N is 8 or 0 it pretty much does nothing... so its stupid to do that?
     //but putting a branch against something like that in a private function is not worth it
     #[inline]
-    const fn slice8shorten_static_zx<const N: usize>(src: [u8; 8]) -> [u8; 8]{
+    const fn slice8shorten_static_zx<const N: usize>(src: StreamChunk) -> StreamChunk{
         assert!(N > 0 && N < 8,
                 "N should be between 1..8, 0 and 8 just return an empty slice");
         let mask = (1u64 << ((N & 7) << 3)).wrapping_sub(1);
         (u64::from_ne_bytes(src) & mask).to_le_bytes()
     }
     #[inline]
-    const fn slice8shorten_zx(src: [u8; 8], new_len: usize) -> [u8; 8]{
+    const fn slice8shorten_zx(src: StreamChunk, new_len: usize) -> StreamChunk{
         let mask = (1u64 << ((new_len & 7) << 3)).wrapping_sub(1);
         (u64::from_ne_bytes(src) & mask).to_le_bytes()
     }
-    const fn slice8shorten_at_n_extend_with_char<const C: char>(src: [u8; 8], new_len: usize) -> [u8; 8]{
+    const fn slice8shorten_at_n_extend_with_char<const C: char>(src: StreamChunk, new_len: usize) -> StreamChunk{
         let shift = (new_len & 7) << 3;
         let clear = (1u64 << shift).wrapping_sub(1);
         //dynamically make new mask
@@ -215,7 +308,7 @@ impl<'a> Lexer {
         ((u64::from_ne_bytes(src) & clear) | mask).to_le_bytes()
     }
 
-    const fn slice8_split_and_extend_at_char<const AT: char, const WITH: char>(src: [u8; 8]) -> [u8; 8]{
+    const fn slice8_split_and_extend_at_char<const AT: char, const WITH: char>(src: StreamChunk) -> StreamChunk{
         return match Self::char_pos::<AT>(u64::from_ne_bytes(src))  {
             p @ 0..8 => Self::slice8shorten_at_n_extend_with_char::<WITH>(src, p),
             _ => src
@@ -230,5 +323,16 @@ impl<'a> Lexer {
     }
     #[inline(always)]
     const fn repeat_byte(b: u8) -> u64 { (b as u64) * (u64::MAX / 255) }
+
+
+    const unsafe fn add_u8_slice_offset(slice_in: Stream, offset: usize) -> Stream{
+        unsafe {
+            let new_ptr = &*slice_from_raw_parts(
+                slice_in.as_ptr().cast::<u8>().byte_add(offset),
+                slice_in.len() - offset,
+            );
+            return new_ptr;
+        }
+    }
 
 }
