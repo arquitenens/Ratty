@@ -79,19 +79,50 @@ impl<'a> Lexer {
             //They cant be empty otherwise the returned pointer wont actually have an address
             keywords: [
                 //0 case, reserved to not handle awkward indexing
-                ConstVec::from_const_array([Keyword::make("_")]),
+                ConstVec::from_const_array([
+                    unreachable!(),
+                    Keyword::make("_"),
+                ]),
                 //1 len, probably unused
-                ConstVec::from_const_array([Keyword::make("_")]),
+                ConstVec::from_const_array([
+                    unreachable!(),
+                    Keyword::make("_")
+                ]),
                 //2 len
-                ConstVec::from_const_array([Keyword::make("_")]),
+                ConstVec::from_const_array([
+                    Keyword::make("in"),
+                    Keyword::make("or"),
+                ]),
                 //3 len
-                ConstVec::from_const_array([Keyword::make("end"), Keyword::make("dyn")]),
+                ConstVec::from_const_array([
+                    Keyword::make("end"),
+                    Keyword::make("dyn"),
+                    Keyword::make("try"),
+                    Keyword::make("for"),
+                    Keyword::make("and"),
+                    Keyword::make("not"),
+                ]),
                 //4 len
-                ConstVec::from_const_array([Keyword::make("task"), Keyword::make("func")]),
+                ConstVec::from_const_array([
+                    Keyword::make("task"),
+                    Keyword::make("func"),
+                    Keyword::make("weak"),
+                    Keyword::make("wait")
+                ]),
                 //5 len
-                ConstVec::from_const_array([Keyword::make("local")]),
+                ConstVec::from_const_array([
+                    Keyword::make("local"),
+                    Keyword::make("block"),
+                    Keyword::make("while"),
+
+                ]),
                 //6 len
-                ConstVec::from_const_array([Keyword::make("struct"), Keyword::make("global")]),
+                ConstVec::from_const_array([
+                    Keyword::make("struct"),
+                    Keyword::make("global"),
+                    Keyword::make("strong"),
+                    Keyword::make("return"),
+                ]),
                 //7 len
                 ConstVec::from_const_array([Keyword::make("_")])
             ],
@@ -128,18 +159,7 @@ impl<'a> Lexer {
 
                     let new = Self::add_u8_slice_offset(raw_lines, stripped_pos + 1);
 
-                    /*
-                    let now = Instant::now();
-                    for i in 0..100_000_000{
-                        let res = self.parse_ident(new);
-                        black_box(res);
-                    }
-                    let elapsed = now.elapsed();
-                    println!("elapsed: {:?}", elapsed);
-
-
-                     */
-                    let res = self.parse_ident(new);
+                    let res = self.parse_declaration(new);
 
                 }
 
@@ -156,7 +176,16 @@ impl<'a> Lexer {
         return unsafe {transmute_copy(&[emptied, emptied])}
     }
 
-    const fn advance_stream8_get_idx<const C: char>(stream: Stream, added_offset: usize) -> (Stream<'_>, StreamChunk, Option<NonZero<usize>>){
+    fn parse_declaration(&mut self, stream: Stream){
+        let ident = self.parse_ident(stream);
+        //the new offset is + 2 due to the colon being skipped and the mandatory space
+        //x: Int -> Int..
+        let ident_offset_stream = unsafe {Self::add_u8_slice_offset(stream, ident.len() + 2)};
+        let ty = self.parse_type(ident_offset_stream);
+
+    }
+
+    const fn advance_stream8_get_idx<const C: char>(stream: Stream<'_>, added_offset: usize) -> (Stream<'_>, StreamChunk, Option<NonZero<usize>>){
         let offset_kw_stream = unsafe {Self::add_u8_slice_offset(stream, added_offset)};
         let ident = Self::load8_extend(offset_kw_stream);
         let maybe_valid_pos = Self::char_pos_checked::<C>(u64::from_le_bytes(ident));
@@ -164,7 +193,7 @@ impl<'a> Lexer {
         return (offset_kw_stream, ident, maybe_valid_pos);
     }
 
-    const fn parse_ident(&mut self, kw: Stream) -> Stream<'_>{
+    const fn parse_ident(&mut self, kw: Stream) -> &str{
 
         let (stream, ident, pos) = Self::advance_stream8_get_idx::<':'>(kw, 0);
 
@@ -175,7 +204,7 @@ impl<'a> Lexer {
             self.emit_error(Analyzer::Error("Use of keyword in identifier"));
 
             unsafe {
-                return &*slice_from_raw_parts(stream.as_ptr(), p.get() - 1);
+                return str::from_utf8_unchecked(&*slice_from_raw_parts(stream.as_ptr(), p.get() - 1));
             }
         }
 
@@ -183,19 +212,15 @@ impl<'a> Lexer {
 
     }
 
-    const fn parse_ident_long(&mut self, kw: Stream) -> Stream<'_>{
+    const fn parse_ident_long(&mut self, kw: Stream) -> &str{
 
         let upper = kw.len();
         let mut index = 0usize;
         let mut keyword_len = 0usize;
 
-
         while index < upper / 8  {
             //0 offset with loop start
             let (_, _, pos) = Self::advance_stream8_get_idx::<':'>(kw, index * 8);
-
-            //the pos is only relevant on the last slice, if it is not 8 char aligned (by chance)
-            //regardless, after that branch fails the loop is over
 
             if let Some(x) = pos{
                 keyword_len += (x.get() - 1);
@@ -205,7 +230,6 @@ impl<'a> Lexer {
             index += 1;
             //After that it's the none case, None technically represents 8, thus, we increment by 8
             keyword_len += 8;
-
         }
 
         match index{
@@ -226,8 +250,14 @@ impl<'a> Lexer {
         }
 
         unsafe {
-            return &*slice_from_raw_parts(kw.as_ptr(), keyword_len);
+            return str::from_utf8_unchecked(&*slice_from_raw_parts(kw.as_ptr(), keyword_len));
         }
+    }
+
+
+    fn parse_type(&mut self, ty_stream: Stream){
+        let ty = Self::slice8_split_and_extend_at_char::<' ', '@'>(Self::load8_extend(ty_stream));
+        println!("ty: {:?}", str::from_utf8(&ty))
     }
 
      const fn check_keyword(&mut self, maybe_kw: StreamChunk, pos: usize) -> bool{
@@ -236,7 +266,7 @@ impl<'a> Lexer {
              let trimmed_raw = Self::slice8shorten_at_n_extend_with_char::<'@'>(maybe_kw, pos);
              let trimmed = str::from_utf8_unchecked(&trimmed_raw);
              if self.kw_hash(trimmed, pos).is_some(){
-                 self.emit_error(Analyzer::Error("Can use keywords as identifiers"));
+                 self.emit_error(Analyzer::Error("Cant use keywords as identifiers"));
                  //TODO temporary, better error handling later
                  panic!("keyword used as ident");
              }
@@ -264,7 +294,8 @@ impl<'a> Lexer {
 
         return 0;
     }
-    //i don't know if this is as fast as i want it
+    //i don't know if this is as fast as i want it, once i have thought of all of the keywords
+    //i can try making some static hash or constant
     const fn kw_hash(&self, of: &str, len: usize) -> Option<u64>{
         let keywords = &self.keywords[len & 7];
         let mut counter = 0;
@@ -351,10 +382,12 @@ impl<'a> Lexer {
 
         let pre = (y.trailing_zeros() >> 3) as usize;
 
-        //little trickery
-        let is_zero = (pre & 8) >> 3;
+        //shift the 8 to position 0
+        //must be logical shift
+        let is_zero = pre >> 3;
         let altered = pre + 1 - (9 * is_zero);
-        NonZero::new(altered)
+        //transmute is sound
+        unsafe {transmute(altered)}
 
     }
 
