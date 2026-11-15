@@ -2,6 +2,7 @@ use std::arch;
 use std::arch::x86_64::_pext_u64;
 use std::hint::{black_box, unreachable_unchecked};
 use std::mem::{transmute, transmute_copy};
+use std::num::NonZero;
 use std::ptr::slice_from_raw_parts;
 use std::time::Instant;
 use crate::lexer::KeywordSlot::Occupied;
@@ -27,7 +28,7 @@ enum Analyzer{
 
 
 pub struct Lexer {
-    //no keyword is longer than 8 thats why 8 static array len thing
+    //no keyword is longer than 8 that's why 8 static array len thing
     keywords: [ConstVec<Keyword, 8>; 8],
     remainder: [u8; 8]
 }
@@ -127,6 +128,7 @@ impl<'a> Lexer {
 
                     let new = Self::add_u8_slice_offset(raw_lines, stripped_pos + 1);
 
+                    /*
                     let now = Instant::now();
                     for i in 0..100_000_000{
                         let res = self.parse_ident(new);
@@ -134,6 +136,10 @@ impl<'a> Lexer {
                     }
                     let elapsed = now.elapsed();
                     println!("elapsed: {:?}", elapsed);
+
+
+                     */
+                    let res = self.parse_ident(new);
 
                 }
 
@@ -150,62 +156,78 @@ impl<'a> Lexer {
         return unsafe {transmute_copy(&[emptied, emptied])}
     }
 
+    const fn advance_stream8_get_idx<const C: char>(stream: Stream, added_offset: usize) -> (Stream<'_>, StreamChunk, Option<NonZero<usize>>){
+        let offset_kw_stream = unsafe {Self::add_u8_slice_offset(stream, added_offset)};
+        let ident = Self::load8_extend(offset_kw_stream);
+        let maybe_valid_pos = Self::char_pos_checked::<C>(u64::from_le_bytes(ident));
 
+        return (offset_kw_stream, ident, maybe_valid_pos);
+    }
 
-    const fn parse_ident(&mut self, kw: Stream) -> &str {
+    const fn parse_ident(&mut self, kw: Stream) -> Stream<'_>{
+
+        let (stream, ident, pos) = Self::advance_stream8_get_idx::<':'>(kw, 0);
+
+        if let Some(p) = pos{
+            //Fast path
+            //Quick dirty check, better error handling later
+            assert!(self.check_keyword(ident, p.get() - 1));
+            self.emit_error(Analyzer::Error("Use of keyword in identifier"));
+
+            unsafe {
+                return &*slice_from_raw_parts(stream.as_ptr(), p.get() - 1);
+            }
+        }
+
+        return self.parse_ident_long(stream);
+
+    }
+
+    const fn parse_ident_long(&mut self, kw: Stream) -> Stream<'_>{
+
         let upper = kw.len();
         let mut index = 0usize;
-        let mut test_for_keyword = true;
-
         let mut keyword_len = 0usize;
 
-        //highest needed buffer
-        let mut kw_buffer = [32u8; 39];
 
-        while index < upper {
+        while index < upper / 8  {
             //0 offset with loop start
-            let offset_kw_stream = unsafe {Self::add_u8_slice_offset(kw, 8 * index)};
-            let ident = Self::load8_extend(offset_kw_stream);
-            let maybe_valid_pos = Self::char_pos::<':'>(u64::from_le_bytes(ident));
+            let (_, _, pos) = Self::advance_stream8_get_idx::<':'>(kw, index * 8);
 
             //the pos is only relevant on the last slice, if it is not 8 char aligned (by chance)
             //regardless, after that branch fails the loop is over
-            index += 1;
 
-            keyword_len += maybe_valid_pos;
-            if test_for_keyword{
-                self.check_keyword(ident, maybe_valid_pos);
-            }
-
-            if let _pos @ 0..8 = maybe_valid_pos{
+            if let Some(x) = pos{
+                keyword_len += (x.get() - 1);
                 break
             }
-            //keywords are only 8 chars max so after it has already be proven to not be between 0..8 it must be 8
-            test_for_keyword = false;
 
-            //This branch doesn't need to exist if keywords are less than 16, thus index is less 2, so an asm LEA+jmp might be good
-            //but asm doesn't work in const, so I'll have to see
-            match index{
-                0..2 => {}
+            index += 1;
+            //After that it's the none case, None technically represents 8, thus, we increment by 8
+            keyword_len += 8;
 
-                2..4 => {
-                    self.emit_warning(Analyzer::Warning("Identifier length too long"));
-                }
-                4 => {
-                    self.emit_error(Analyzer::Error("that"));
-                    //TODO temporary, proper handling later
-                    panic!("identifier length too long");
-                }
-                //if the code above already this cannot be reached
-                //since the index only increments by one
-                _ => unsafe {unreachable_unchecked()}
+        }
+
+        match index{
+            0..2 => {}
+
+            2..4 => {
+                self.emit_warning(Analyzer::Warning("Identifier length too long"));
             }
+            4 => {
+                self.emit_error(Analyzer::Error("idk too long ident something something"));
+                //TODO temporary, proper handling later
 
+                panic!("identifier length too long");
+            }
+            //if the code above already this cannot be reached
+            //since the index only increments by one
+            _ => unsafe {unreachable_unchecked()}
         }
+
         unsafe {
-            return str::from_utf8_unchecked(&*slice_from_raw_parts(kw.as_ptr(), keyword_len));
+            return &*slice_from_raw_parts(kw.as_ptr(), keyword_len);
         }
-
     }
 
      const fn check_keyword(&mut self, maybe_kw: StreamChunk, pos: usize) -> bool{
@@ -235,7 +257,7 @@ impl<'a> Lexer {
             let a = of.as_bytes();
             let hash = keywords.get(counter).hash.to_le_bytes();
             if Self::raw_cmp(a, &hash){
-                return u64::from_ne_bytes(hash);
+                return u64::from_le_bytes(hash);
             }
             counter += 1;
         }
@@ -250,7 +272,7 @@ impl<'a> Lexer {
             let a = of.as_bytes();
             let hash = keywords.get(counter).hash.to_le_bytes();
             if Self::raw_cmp(a, &hash){
-                return Some(u64::from_ne_bytes(hash));
+                return Some(u64::from_le_bytes(hash));
             }
             counter += 1;
         }
@@ -260,14 +282,12 @@ impl<'a> Lexer {
 
 
     const fn raw_cmp(a: &[u8], b: &[u8]) -> bool{
-        let a = u64::from_ne_bytes(Self::load8_extend(a));
-        let b = u64::from_ne_bytes(Self::load8_extend(b));
+        let a = u64::from_le_bytes(Self::load8_extend(a));
+        let b = u64::from_le_bytes(Self::load8_extend(b));
 
         return a == b;
     }
-
-
-
+    
     const fn is_full(src: &[u8; 8]) -> bool {
         //if index 7 is filled then logically all others must also be filled
         src[7] != b'@'
@@ -297,12 +317,12 @@ impl<'a> Lexer {
         assert!(N > 0 && N < 8,
                 "N should be between 1..8, 0 and 8 just return an empty slice");
         let mask = (1u64 << ((N & 7) << 3)).wrapping_sub(1);
-        (u64::from_ne_bytes(src) & mask).to_le_bytes()
+        (u64::from_le_bytes(src) & mask).to_le_bytes()
     }
     #[inline]
     const fn slice8shorten_zx(src: StreamChunk, new_len: usize) -> StreamChunk{
         let mask = (1u64 << ((new_len & 7) << 3)).wrapping_sub(1);
-        (u64::from_ne_bytes(src) & mask).to_le_bytes()
+        (u64::from_le_bytes(src) & mask).to_le_bytes()
     }
     const fn slice8shorten_at_n_extend_with_char<const C: char>(src: StreamChunk, new_len: usize) -> StreamChunk{
         let shift = (new_len & 7) << 3;
@@ -310,21 +330,45 @@ impl<'a> Lexer {
         //dynamically make new mask
         //the compiler should usually replace the mask with a constant
         let mask: u64 = Self::repeat_byte(C as u8) << shift;
-        ((u64::from_ne_bytes(src) & clear) | mask).to_le_bytes()
+        ((u64::from_le_bytes(src) & clear) | mask).to_le_bytes()
     }
 
     const fn slice8_split_and_extend_at_char<const AT: char, const WITH: char>(src: StreamChunk) -> StreamChunk{
-        return match Self::char_pos::<AT>(u64::from_ne_bytes(src))  {
-            p @ 0..8 => Self::slice8shorten_at_n_extend_with_char::<WITH>(src, p),
+        return match Self::char_pos::<AT>(u64::from_le_bytes(src)) {
+           pos @ 0..8 => Self::slice8shorten_at_n_extend_with_char::<WITH>(src, pos),
             _ => src
         }
     }
+
+    ///This returns the indecies incremented by 1 due to 0 being the invalid case
+    ///As there is no real "range types" just yet, if they get released i can switch to that
+    ///So be careful, the real "Some(x)" index is x - 1
     #[inline]
-    const fn char_pos<const C: char>(string: u64) -> usize{
+    pub const fn char_pos_checked<const C: char>(string: u64) -> Option<NonZero<usize>>{
         let to_find_mask: u64 = Self::repeat_byte(C as u8);
         let x: u64 = string ^ to_find_mask;
         let y: u64 = (x.overflowing_sub(0x0101010101010101).0) & !x & 0x8080808080808080;
-        (y.trailing_zeros() >> 3) as usize
+
+        let pre = (y.trailing_zeros() >> 3) as usize;
+
+        //little trickery
+        let is_zero = (pre & 8) >> 3;
+        let altered = pre + 1 - (9 * is_zero);
+        NonZero::new(altered)
+
+    }
+
+    ///This returns index 0..8, where 8 is invalid
+    #[inline]
+    pub const fn char_pos<const C: char>(string: u64) -> usize{
+        let to_find_mask: u64 = Self::repeat_byte(C as u8);
+        let x: u64 = string ^ to_find_mask;
+        let y: u64 = (x.overflowing_sub(0x0101010101010101).0) & !x & 0x8080808080808080;
+
+        let pre = (y.trailing_zeros() >> 3) as usize;
+
+        return pre;
+
     }
     #[inline(always)]
     const fn repeat_byte(b: u8) -> u64 { (b as u64) * (u64::MAX / 255) }
