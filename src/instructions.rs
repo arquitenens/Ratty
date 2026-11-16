@@ -11,6 +11,7 @@ pub enum IROps{
     DIV___D,
     MOD___E,
     CALL__F,
+    SWAP__G
 }
 impl IROps {
     pub(crate) const unsafe fn from_raw(i: u8) -> IROps{
