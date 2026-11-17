@@ -1,4 +1,4 @@
-local x: ? = 0
+local x: ? = test_funct()
 local xx: Int = 0
 local xxx: Int = 0
 local xxxx: Int = 0

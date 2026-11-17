@@ -1,22 +1,17 @@
 
 use std::arch::x86_64::_pext_u64;
 use std::convert::Infallible;
+use std::hash::Hash;
 use std::hint::{black_box, unreachable_unchecked};
 use std::mem::{transmute, transmute_copy};
 use std::num::{NonZero, NonZeroU128};
+use std::ptr;
 use std::ptr::{slice_from_raw_parts, NonNull};
 use std::time::Instant;
-use crate::lexer::KeywordSlot::Occupied;
 use crate::util::ConstVec;
 //TODO better approach than nested vec
 
 
-
-#[derive(Copy, Clone)]
-enum KeywordSlot{
-    Occupied(Keyword),
-    Empty
-}
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
@@ -37,7 +32,7 @@ pub(crate) type StreamChunk = [u8; 8];
 
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug)]
-struct Keyword{
+pub(crate) struct Keyword{
     pub(crate) hash: u64,
     //raw name for error reporting
     //it cant really be a static str slice since it might change
@@ -81,17 +76,13 @@ impl<'a> Lexer {
             //They cant be empty otherwise the returned pointer wont actually have an address
             keywords: [
                 //0 case, reserved to not handle awkward indexing
-                ConstVec::from_const_array([
-                    Keyword::make("_"),
-                ]),
+                ConstVec::from_const_array([]),
                 //1 len, probably unused
-                ConstVec::from_const_array([
-                    Keyword::make("_")
-                ]),
+                ConstVec::from_const_array([]),
                 //2 len
                 ConstVec::from_const_array([
-                    Keyword::make("in"),
-                    Keyword::make("or"),
+                    Keyword::make("in"), //01101111
+                    Keyword::make("or"), //01101001
                 ]),
                 //3 len
                 ConstVec::from_const_array([
@@ -124,7 +115,7 @@ impl<'a> Lexer {
                     Keyword::make("return"),
                 ]),
                 //7 len
-                ConstVec::from_const_array([Keyword::make("_")])
+                ConstVec::from_const_array([])
             ],
 
             //The star symbol for a pointer is implicitly a primitive type
@@ -170,7 +161,7 @@ impl<'a> Lexer {
 
         let kw = Self::load8_extend(raw_lines);
 
-        let maybe_kw = Self::slice8_split_and_extend_at_char::<' ', '@'>(kw);
+        let maybe_kw = Self::slice8_split_and_extend_with_at_sign::<' '>(kw);
 
         let x = match &maybe_kw {
             //I don't want to do it like this but rust seems a bit stupid with its const matching
@@ -180,7 +171,7 @@ impl<'a> Lexer {
                     let stripped_pos = Self::char_pos::<'@'>(u64::from_le_bytes(maybe_kw));
 
                     let new = Self::add_u8_slice_offset(raw_lines, stripped_pos + 1);
-                    /*
+
                     let now = Instant::now();
                     for i in 0..100_000_000{
                         let res = self.parse_declaration(new);
@@ -189,15 +180,9 @@ impl<'a> Lexer {
 
                     let elapsed = now.elapsed();
                     println!("parsed declaration: {:?}", elapsed);
-                    */
-                    let now = Instant::now();
-                    for i in 0..100_000_000{
-                        let res = self.parse_declaration(new);
-                        black_box(res);
-                    }
-                    let elapsed = now.elapsed();
-                    println!("parsed declaration: {:?}", elapsed);
 
+
+                    //let res = self.parse_declaration(new);
                 }
 
             },
@@ -212,7 +197,8 @@ impl<'a> Lexer {
         //its just so the code compiles
         return unsafe {transmute_copy(&[emptied, emptied])}
     }
-
+    #[unsafe(no_mangle)]
+    #[inline(never)]
     fn parse_declaration(&mut self, stream: Stream){
         let ident = self.parse_ident(stream);
 
@@ -221,6 +207,7 @@ impl<'a> Lexer {
         let ident_offset_stream = unsafe {Self::add_u8_slice_offset(stream, ident.len() + 2)};
 
         let ty = self.parse_type(ident_offset_stream);
+
         black_box(ty);
 
     }
@@ -234,6 +221,8 @@ impl<'a> Lexer {
     }
 
 
+    #[unsafe(no_mangle)]
+    #[inline(never)]
     const fn parse_ident(&mut self, kw: Stream) -> &str{
 
         let (stream, ident, pos) = Self::advance_stream8_get_idx::<':'>(kw, 0);
@@ -248,56 +237,68 @@ impl<'a> Lexer {
             }
         }
 
+
         return self.parse_ident_long(stream);
 
     }
 
     const fn parse_ident_long(&mut self, kw: Stream) -> &str{
-
-        let upper = kw.len();
-        let mut index = 0usize;
+        //Hand unrolled, not pretty i know
         let mut keyword_len = 0usize;
 
-        while index < upper / 8  {
-            //0 offset with loop start
-            let (_, _, pos) = Self::advance_stream8_get_idx::<':'>(kw, index * 8);
-
-            if let Some(x) = pos{
-                keyword_len += (x.get() - 1);
-                break
+        //first
+        let (_, _, pos) = Self::advance_stream8_get_idx::<':'>(kw, 0);
+        if let Some(x) = pos{
+            keyword_len += (x.get() - 1);
+            return unsafe {
+                str::from_utf8_unchecked(&*slice_from_raw_parts(kw.as_ptr(), keyword_len))
             }
-
-            index += 1;
-            //After that it's the none case, None technically represents 8, thus, we increment by 8
-            keyword_len += 8;
+        }
+        //Nothing found so inc by 8
+        keyword_len += 8;
+        //second
+        let (_, _, pos) = Self::advance_stream8_get_idx::<':'>(kw, 8);
+        if let Some(x) = pos{
+            keyword_len += (x.get() - 1);
+            return unsafe {
+                str::from_utf8_unchecked(&*slice_from_raw_parts(kw.as_ptr(), keyword_len))
+            }
         }
 
-        match index{
-            0..2 => {}
+        keyword_len += 8;
 
-            2..4 => {
-                self.emit_warning(Analyzer::Warning("Identifier length too long"));
+        self.emit_warning(Analyzer::Warning("Identifier length too long"));
+        //third
+        let (_, _, pos) = Self::advance_stream8_get_idx::<':'>(kw, 16);
+        if let Some(x) = pos{
+            keyword_len += (x.get() - 1);
+            return unsafe {
+                str::from_utf8_unchecked(&*slice_from_raw_parts(kw.as_ptr(), keyword_len))
             }
-            4 => {
-                self.emit_error(Analyzer::Error("idk too long ident something something"));
-                //TODO temporary, proper handling later
+        }
+        keyword_len += 8;
 
-                panic!("identifier length too long");
+        self.emit_warning(Analyzer::Warning("Identifier length too long"));
+
+        //fourth
+        let (_, _, pos) = Self::advance_stream8_get_idx::<':'>(kw, 24);
+        if let Some(x) = pos{
+            keyword_len += (x.get() - 1);
+            return unsafe {
+                str::from_utf8_unchecked(&*slice_from_raw_parts(kw.as_ptr(), keyword_len))
             }
-            //if the code above already this cannot be reached
-            //since the index only increments by one
-            _ => unsafe {unreachable_unchecked()}
         }
+        keyword_len += 8;
 
-        unsafe {
-            return str::from_utf8_unchecked(&*slice_from_raw_parts(kw.as_ptr(), keyword_len));
-        }
+        self.emit_error(Analyzer::Error("idk too long ident something something"));
+        panic!("identifier length too long");
     }
 
 
 
+    #[inline]
     const fn parse_type(&mut self, ty_stream: Stream) -> u8{
-        let ty = Self::slice8_split_and_extend_at_char::<' ', '@'>(Self::load8_extend(ty_stream));
+        let ty = Self::slice8_split_and_extend_with_at_sign::<' '>(Self::load8_extend(ty_stream));
         //The returned types directly return the correct representation for the IR
         if self.check_primitive(ty).is_some(){
             //This code is technically already inside the "check_primitive" function
@@ -310,6 +311,7 @@ impl<'a> Lexer {
 
     //Im such a clever cookie
 
+    #[inline]
     const fn check_primitive(&mut self, maybe_type: StreamChunk) -> Option<NonZeroU128>{
         let orig = u64::from_le_bytes(maybe_type);
         //im only matching the last 3 bits
@@ -331,42 +333,60 @@ impl<'a> Lexer {
             NonZeroU128::new(ty * (is_match as u128))
         }
     }
-
+    #[inline]
      const fn check_keyword(&mut self, maybe_kw: StreamChunk, pos: usize) -> bool{
 
-         unsafe {
-             let trimmed_raw = Self::slice8shorten_at_n_extend_with_char::<'@'>(maybe_kw, pos);
-             let trimmed = str::from_utf8_unchecked(&trimmed_raw);
-             if self.kw_hash(trimmed, pos).is_some(){
-                 self.emit_error(Analyzer::Error("Cant use keywords as identifiers"));
-                 //TODO temporary, better error handling later
-                 panic!("keyword used as ident");
-             }
+         let trimmed_raw = Self::slice8shorten_at_n_extend_with_char::<'@'>(maybe_kw, pos);
+         if self.kw_hash(trimmed_raw, pos).is_some(){
+             self.emit_error(Analyzer::Error("Cant use keywords as identifiers"));
+             //TODO temporary, better error handling later
+             panic!("keyword used as ident");
          }
 
         return true;
     }
-
+    #[inline]
     const fn emit_warning(&mut self, warning: Analyzer){}
-
+    #[inline]
     const fn emit_error(&mut self, error: Analyzer){}
 
     //i don't know if this is as fast as i want it, once i have thought of all the keywords
     //i can try making some static hash or constant
-    const fn kw_hash(&self, of: &str, len: usize) -> Option<u64>{
-        let keywords = &self.keywords[len & 7];
-        let mut counter = 0;
-        while counter < keywords.len() {
-            let a = of.as_bytes();
-            let hash = unsafe {keywords.get_unchecked(counter).hash.to_le_bytes()};
-            if Self::raw_cmp(a, &hash){
-                return Some(u64::from_le_bytes(hash));
-            }
-            counter += 1;
-        }
+    pub const fn kw_hash(&self, of: StreamChunk, len: usize) -> Option<u64> {
+        let raw = u64::from_le_bytes(of);
+        let mod_len = len & 7;
 
-        return None;
+        //These masks have the bits set in the position of the
+        //ascii lowest 5 bits value, e.g 'i' is "01101001" the lowest 5 bits are "01001" which is 9
+        //thus the mask[mod_len] has a bit set at 9
+        const LOOKUP: [u64; 8] = [
+            0,
+            0,
+            0x00008200,
+            0x00104072,
+            0x00084202,
+            0x00801004,
+            0x0004400A,
+            0,
+        ];
+
+        //Extract the lowest 5 bits, they are the only relevant things
+        //this can result in any index within that range
+        let raw_hash = raw & 31;
+
+        let bit = 1u64 << raw_hash;
+
+        if LOOKUP[mod_len] & bit == 0 {
+            return None;
+        }else {
+            let index = (LOOKUP[mod_len] & (bit - 1)).count_ones() as usize;
+            return unsafe {
+                let x = self.keywords[mod_len].get_unchecked(index).hash;
+                Some(x)
+            }
+        }
     }
+
 
     #[inline(always)]
     const fn raw_cmp(a: &[u8], b: &[u8]) -> bool{
@@ -380,14 +400,25 @@ impl<'a> Lexer {
         //if index 7 is filled then logically all others must also be filled
         src[7] != b'@'
     }
-    #[inline(always)]
+
+    #[inline]
     const fn load8_extend(src: Stream) -> StreamChunk {
         let mut emptied = [64u8; 8];
-        let len = if src.len() < 8 { src.len() } else { 8 };
-
+        //the compiler didn't seem to catch up on that so well fast path
+        //it now produces "mov rax, qword ptr [rdi]" which is great! i didn't even have to nudge it
+        if src.len() >= 8{
+            unsafe {
+                ptr::copy_nonoverlapping(src.as_ptr(), emptied.as_mut_ptr(), 8);
+                return emptied;
+            }
+        }
         //LLVM just chocked on the while loop for whatever reason
         //It was ruining the performance
-        if len > 0 { emptied[0] = src[0]; }
+        let len = src.len();
+        let mut new: u64 = 0x4040404040404040;
+
+        //replace with bitwise writes
+        if len > 0 { emptied[0] = src[1] }
         if len > 1 { emptied[1] = src[1]; }
         if len > 2 { emptied[2] = src[2]; }
         if len > 3 { emptied[3] = src[3]; }
@@ -417,17 +448,62 @@ impl<'a> Lexer {
     #[inline(always)]
     const fn slice8shorten_at_n_extend_with_char<const C: char>(src: StreamChunk, new_len: usize) -> StreamChunk{
         let shift = (new_len & 7) << 3;
-        let clear = (1u64 << shift).wrapping_sub(1);
+
+        //This might be faster?
+        const CLEAR_MASKS: [u64; 8] = [
+            0x0000000000000000,
+            0x00000000000000FF,
+            0x000000000000FFFF,
+            0x0000000000FFFFFF,
+            0x00000000FFFFFFFF,
+            0x000000FFFFFFFFFF,
+            0x0000FFFFFFFFFFFF,
+            0x00FFFFFFFFFFFFFF,
+        ];
+
+        let clear = CLEAR_MASKS[new_len & 7];
         //dynamically make new mask
         //the compiler should usually replace the mask with a constant
-        let mask: u64 = Self::repeat_byte(C as u8) << shift;
+        let mask: u64 = Self::repeat_char_static::<C>() << shift;
         ((u64::from_le_bytes(src) & clear) | mask).to_le_bytes()
+    }
+
+    #[inline(always)]
+    const fn slice8shorten_extend_with_at(src: StreamChunk, new_len: usize) -> StreamChunk{
+
+        //This might be faster?
+        const CLEAR_MASKS: [u64; 8] = [
+            0x0000000000000000,
+            0x00000000000000FF,
+            0x000000000000FFFF,
+            0x0000000000FFFFFF,
+            0x00000000FFFFFFFF,
+            0x000000FFFFFFFFFF,
+            0x0000FFFFFFFFFFFF,
+            0x00FFFFFFFFFFFFFF,
+        ];
+
+        let clear = CLEAR_MASKS[new_len & 7];
+
+        //i don't have to shift the 0x40 mask because every accepted ascii char is above 64
+        //thus it will naturally have said bit set and the OR will do nothing
+        //TODO though i will probably change it since structs and enums should be uppercase therefore this will break
+        //(without shifts that is)
+        ((u64::from_le_bytes(src) & clear) | 0x4040404040404040).to_le_bytes()
     }
 
     #[inline(always)]
     const fn slice8_split_and_extend_at_char<const AT: char, const WITH: char>(src: StreamChunk) -> StreamChunk{
         return match Self::char_pos::<AT>(u64::from_le_bytes(src)) {
            pos @ 0..8 => Self::slice8shorten_at_n_extend_with_char::<WITH>(src, pos),
+            _ => src
+        }
+    }
+
+    #[inline(always)]
+    const fn slice8_split_and_extend_with_at_sign<const AT: char>(src: StreamChunk) -> StreamChunk{
+        return match Self::char_pos::<AT>(u64::from_le_bytes(src)) {
+            pos @ 0..8 => Self::slice8shorten_extend_with_at(src, pos),
             _ => src
         }
     }
@@ -467,7 +543,10 @@ impl<'a> Lexer {
     }
 
     #[inline(always)]
-    const fn repeat_byte(b: u8) -> u64 { (b as u64) * 0x0101010101010101 }
+    pub(crate) const fn repeat_byte(b: u8) -> u64 { (b as u64) * 0x0101010101010101 }
+    #[inline(always)]
+    pub(crate) const fn repeat_char_static<const B: char>() -> u64 { u64::from_le_bytes([B as u8; 8]) }
+
 
     #[inline(always)]
     const unsafe fn add_u8_slice_offset(slice_in: Stream, offset: usize) -> Stream{
