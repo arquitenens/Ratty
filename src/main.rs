@@ -9,8 +9,9 @@ use std::time::Instant;
 mod instructions;
 mod vm;
 mod ir_parse;
-mod lexer;
+pub(crate) mod lexer;
 mod util;
+mod tests;
 
 use MaybeRedundant::*;
 use crate::ir_parse::RawParser;
@@ -35,9 +36,11 @@ fn main() {
     assert!(read.is_ascii());
     let mut lexer = Lexer::new();
 
+    let now = Instant::now();
     for i in read.split("\n") {
         let _ = lexer.try_lex_single(i);
     }
+
 
 
 
