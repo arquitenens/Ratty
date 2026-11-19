@@ -23,7 +23,7 @@ use crate::lexer::{Lexer, StreamChunk};
 
 
 fn main() {
-
+    
     //around 480 million lines per second on my cpu
     let t_120m_ir = "./src/parsingtests/textual_ir/Bigfile.rir";
     let t_1m_ir = "./src/parsingtests/textual_ir/Bigfile1m.rir";
@@ -40,12 +40,6 @@ fn main() {
     for i in read.split("\n") {
         let _ = lexer.try_lex_single(i);
     }
-
-
-
-
-
-
 
 }
 

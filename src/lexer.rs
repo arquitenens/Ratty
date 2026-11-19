@@ -124,7 +124,7 @@ impl<'a> Lexer {
                 //The stars literally aligned for this layout to work
                 //the comments signify the lowest 3 bits in the ascii rep
                 //All are 64 bits
-
+                //TODO maybe expand to 4 bits so i can include something like Nil or None
                 //8 raw bytes, unknown type
                 Keyword::make("Pack"),  //000
 
@@ -156,8 +156,6 @@ impl<'a> Lexer {
 
         let emptied: StreamChunk = [0u8; 8];
 
-
-
         let kw = Helper::load8_extend(raw_lines);
 
         let maybe_kw = Helper::slice8_split_and_extend_with_at_sign::<' '>(kw);
@@ -172,13 +170,15 @@ impl<'a> Lexer {
                     let new = Helper::add_u8_slice_offset(raw_lines, stripped_pos + 1);
 
                     let now = Instant::now();
-
-                    for i in 0..500_000_000{
+                    /*
+                    for i in 0..100_000_000 {
                         let res = self.parse_declaration(new);
-                        black_box(res);
                     }
                     let elapsed = now.elapsed();
                     println!("Elapsed: {:.2?}", elapsed);
+                    */
+
+                    let res = self.parse_declaration(new);
                 }
 
             },
@@ -189,23 +189,44 @@ impl<'a> Lexer {
             }
         };
 
-        //Ignore the clear UB for now, im not using the return value any time soon nor am i constructing it,
+        //im not using the return value any time soon nor am i constructing it,
         //its just so the code compiles
         return unsafe {transmute_copy(&[emptied, emptied])}
     }
-    #[unsafe(no_mangle)]
-    #[inline(never)]
+
     pub(crate) fn parse_declaration(&mut self, stream: Stream){
         let ident = self.parse_ident(stream);
-
+        //print!("ident: {:?}", ident);
         //the new offset is + 2 due to the colon being skipped and the mandatory space
         //x: Int -> Int..
         let ident_offset_stream = unsafe {Helper::add_u8_slice_offset(stream, ident.len() + 2)};
 
         let ty = self.parse_type(ident_offset_stream);
 
+        let val_offset_stream = unsafe {
+            //+ 3 because ..." = val", we dont need the rest
+             Helper::add_u8_slice_offset(ident_offset_stream, Self::type_length(ty) + 3)
+         };
+
+        let val = self.parse_expr(ty, val_offset_stream);
+
         black_box(ty);
 
+    }
+    #[inline]
+    pub(crate) const fn type_length(ty: u8) -> usize{
+        //Technically the lowest 3 bits
+        match ty {
+            b'?' => 1, //?
+            b'B' => 3, //Int
+            b'G' => 5, //Float
+            b'A' => 4, //Pack
+            b'C' => 4, //Bool
+            b'D' => 6, //String
+            b'E' => 5, //Tuple
+            b'F' => 4, //Uint
+            _ => unreachable!(),
+        }
     }
 
     const fn advance_stream8_get_idx<const C: char>(stream: Stream<'_>, added_offset: usize) -> (Stream<'_>, StreamChunk, Option<NonZero<usize>>){
@@ -216,9 +237,6 @@ impl<'a> Lexer {
         return (offset_kw_stream, ident, maybe_valid_pos);
     }
 
-
-    #[unsafe(no_mangle)]
-    #[inline(never)]
     const fn parse_ident(&mut self, kw: Stream) -> &str{
 
         let (stream, ident, pos) = Self::advance_stream8_get_idx::<':'>(kw, 0);
@@ -297,8 +315,6 @@ impl<'a> Lexer {
         let ty = Helper::slice8_split_and_extend_with_at_sign::<' '>(Helper::load8_extend(ty_stream));
         //The returned types directly return the correct representation for the IR
         if self.check_primitive(ty).is_some(){
-            //This code is technically already inside the "check_primitive" function
-            //But since i didn't want to change the layout of KeyWord this will do
             //No need to conver to u64, i only need to check the first byte anyway
             return ((ty[0] & 0x7) + 'A' as u8);
         }
@@ -306,8 +322,11 @@ impl<'a> Lexer {
         return '?' as u8;
     }
 
-    //Im such a clever cookie
+    pub(crate) fn parse_expr(&mut self, ty: u8, expr_stream: Stream){
+        //println!("expr {:?}", str::from_utf8(expr_stream));
+    }
 
+    //Im such a clever cookie
     #[inline]
     const fn check_primitive(&mut self, maybe_type: StreamChunk) -> Option<NonZeroU64>{
         let orig = u64::from_le_bytes(maybe_type);
