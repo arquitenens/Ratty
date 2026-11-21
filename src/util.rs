@@ -233,4 +233,20 @@ impl Helper{
             return new_ptr;
         }
     }
+
+    //The const rust version is optimized for code size, I don't care about that
+    //My target is Me, not some shitty microcontroller
+    pub(crate) const fn non_naive_is_ascii(src: Stream) -> bool{
+        let mut counter = 0;
+        while counter < src.len() {
+            let bytes = u64::from_le_bytes(Helper::load8_extend(src));
+            if (bytes & 0x8080808080808080) != 0 {
+                return false
+            }
+            counter += 1;
+        }
+        true
+    }
+
+
 }

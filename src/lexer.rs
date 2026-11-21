@@ -152,6 +152,9 @@ impl<'a> Lexer {
         }
 
         let raw_lines: Stream = line.as_bytes();
+
+        //Check every line for non ascii
+        assert!(Helper::non_naive_is_ascii(raw_lines));
         //after this unchecked conversions should be fine
 
         let emptied: StreamChunk = [0u8; 8];
@@ -203,8 +206,12 @@ impl<'a> Lexer {
 
         let ty = self.parse_type(ident_offset_stream);
 
+
+
         let val_offset_stream = unsafe {
             //+ 3 because ..." = val", we dont need the rest
+            //i could make the spacing optional with around 5 instructions
+            //so you can write "x: Int=1" but i currently don't deem it worth it
              Helper::add_u8_slice_offset(ident_offset_stream, Self::type_length(ty) + 3)
          };
 
