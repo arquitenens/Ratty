@@ -170,13 +170,13 @@ impl<'a> Lexer {
                     let new = Helper::add_u8_slice_offset(raw_lines, stripped_pos + 1);
 
                     let now = Instant::now();
-                    /*
-                    for i in 0..100_000_000 {
-                        let res = self.parse_declaration(new);
-                    }
-                    let elapsed = now.elapsed();
-                    println!("Elapsed: {:.2?}", elapsed);
-                    */
+
+                    //for i in 0..100_000_000 {
+                    //    let res = self.parse_declaration(new);
+                    //}
+                    //let elapsed = now.elapsed();
+                    //println!("Elapsed: {:.2?}", elapsed);
+
 
                     let res = self.parse_declaration(new);
                 }
@@ -208,9 +208,8 @@ impl<'a> Lexer {
              Helper::add_u8_slice_offset(ident_offset_stream, Self::type_length(ty) + 3)
          };
 
-        let val = self.parse_expr(ty, val_offset_stream);
-
-        black_box(ty);
+        let val = black_box(self.parse_expr(ty, val_offset_stream));
+        black_box(val);
 
     }
     #[inline]
@@ -322,8 +321,8 @@ impl<'a> Lexer {
         return '?' as u8;
     }
 
-    pub(crate) fn parse_expr(&mut self, ty: u8, expr_stream: Stream){
-        //println!("expr {:?}", str::from_utf8(expr_stream));
+    pub(crate) fn parse_expr(&mut self, ty: u8, expr_stream: Stream<'a>) -> Stream<'a>{
+        return expr_stream;
     }
 
     //Im such a clever cookie

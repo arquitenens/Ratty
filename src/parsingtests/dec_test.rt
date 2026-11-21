@@ -1,0 +1,10 @@
+local x: ? = test_funct()
+local xx: Int = 67 * Skibidi
+local xxx: Float = 0
+local xxxx: Pack = 0
+local xxxxx: Bool = 0
+local xxxxxx: String = 0
+local xxxxxxx: Tuple = 0
+local xxxxxxxx: Uint = 0
+local xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Int = 0
+local xxxxxxx: Int = 0
